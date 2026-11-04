@@ -17,3 +17,8 @@ MAX_TEAM_SIZE = 12
 
 # Table names, shared by the DuckDB and Snowflake loaders
 TABLES = ("employees", "org_units", "org_closure")
+
+# Privacy: never report on a group smaller than this
+MIN_GROUP_SIZE = 5
+# Cap on rows a single question can return
+MAX_RESULT_ROWS = 200

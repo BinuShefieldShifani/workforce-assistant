@@ -69,3 +69,32 @@ def fake_csv(tmp_path):
     path = tmp_path / "hr.csv"
     make_fake_raw().to_csv(path, index=False)
     return path
+
+
+@pytest.fixture
+def db_path(tmp_path):
+    """A DuckDB built from fake data, the same way the real one is built."""
+    from workforce.db import load_duckdb
+    from workforce.org import build_org, write_processed
+    from workforce.raw import load_raw
+
+    csv = tmp_path / "hr.csv"
+    make_fake_raw(n=600, seed=1).to_csv(csv, index=False)
+    org = build_org(load_raw(csv), seed=42)
+    write_processed(org, tmp_path / "processed")
+    path = tmp_path / "test.duckdb"
+    load_duckdb(tmp_path / "processed", path)
+    return path
+
+
+def leader_where(db_path, sql: str) -> int:
+    """Return the first leader_id matching a condition on the leaders view."""
+    import duckdb
+
+    con = duckdb.connect(str(db_path), read_only=True)
+    try:
+        row = con.execute(f"SELECT leader_id FROM leaders WHERE {sql} ORDER BY leader_id").fetchone()
+    finally:
+        con.close()
+    assert row is not None, f"no leader where {sql}"
+    return int(row[0])

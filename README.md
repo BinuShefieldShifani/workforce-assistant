@@ -12,8 +12,8 @@ generates a synthetic org tree on top of it (company, departments, functions, te
 ## Status
 
 - [x] Day 1: data, synthetic org hierarchy, DuckDB and Snowflake loaders, tests, CI
-- [ ] Day 2: access scoping and small-group suppression
-- [ ] Day 3: text-to-SQL agent with answer verification
+- [x] Day 2: access scoping and small-group suppression
+- [x] Day 3: text-to-SQL agent with answer verification
 - [ ] Day 4: golden question set and eval report
 - [ ] Day 5: FastAPI back end, Next.js front end, deployment
 
@@ -26,6 +26,38 @@ generates a synthetic org tree on top of it (company, departments, functions, te
 | `org_closure` | Every ancestor/descendant pair of units, so "everyone under unit X" is one join |
 | `unit_headcount` (view) | Headcount per unit including everything below it |
 | `leaders` (view) | Everyone who heads a unit, with their headcount |
+
+## How a question is answered
+
+```
+question + leader id
+  -> scope:   build an in-memory DuckDB with only this leader's people
+              (file access and Python lookups switched off and locked)
+  -> LLM:     write one SQL query, or refuse (named people, row-level lists)
+  -> guard:   one SELECT on employees, aggregates only (COUNT/SUM/AVG),
+              no joins/subqueries/CTEs, no MIN/MAX, no per-person tricks
+              -> on rejection, the reason goes back to the LLM for one retry
+  -> privacy: hide groups under 5 people, block filters that leave out
+              fewer than 5, hide extra rows so hidden ones can't be recovered
+  -> LLM:     write the answer using only the result
+  -> verify:  every number in the answer must come from the result
+              -> one retry, then a plain answer built straight from the table
+```
+
+The privacy rules live in code, not in the prompt, so they hold even when the model
+writes a bad query. Every answer comes back with its status, SQL, steps, token use and
+latency.
+
+## Known limits
+
+- **Repeated queries.** The differencing rules stop the obvious "everyone minus one
+  team" attack. Someone combining many different filters can still narrow down small
+  groups. A production system would add query auditing or noise on top.
+- **Indicator counts.** `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` inside a group of 5+ can
+  still count a very narrow subgroup. The guard blocks using `employee_id` or
+  `manager_id` in such conditions, but not every narrow combination of attributes.
+- **Synthetic org tree.** Reporting lines are generated, so team-level patterns mean
+  nothing about the real dataset.
 
 ## Setup
 
@@ -43,6 +75,18 @@ and put it in `data/raw/`.
 python scripts/build_org.py     # builds the org tree, writes data/processed/
 python scripts/load_duckdb.py   # loads data/workforce.duckdb
 pytest                          # tests use generated fake data, no download needed
+```
+
+Ask questions. By default this uses open-weight models (Llama 3.3 70B) on Groq's free
+tier through its OpenAI-compatible API, so no paid key is needed. Any OpenAI-compatible
+endpoint works, and Claude works with `LLM_PROVIDER=anthropic`.
+
+```bash
+pip install -e ".[llm]"
+cp .env.example .env            # add your Groq key as OPENAI_API_KEY
+python scripts/ask.py --list-leaders
+python scripts/ask.py --leader 374 "What is the attrition rate by job role?"
+python scripts/smoke_test.py    # 6 scored questions + 1 informational
 ```
 
 Optional, Snowflake:
