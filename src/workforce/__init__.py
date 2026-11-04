@@ -1,0 +1,1 @@
+"""Workforce analytics assistant."""
