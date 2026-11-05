@@ -76,7 +76,9 @@ def _check_aggregate_argument(agg: exp.AggFunc) -> None:
         if not all(_is_null_or_literal(b) for b in branches):
             raise SQLRejected(
                 "CASE/IF inside an aggregate may only return numbers or NULL "
-                "(an indicator like CASE WHEN attrition THEN 1 ELSE 0 END)"
+                "(an indicator like CASE WHEN attrition THEN 1 ELSE 0 END). "
+                "To compare a value between groups (e.g. leavers vs stayers), "
+                "GROUP BY that column instead: SELECT attrition, AVG(x) ... GROUP BY attrition"
             )
         for col in arg.find_all(exp.Column):
             if col.name.lower() in IDENTIFYING_COLUMNS:
