@@ -18,6 +18,7 @@ METRICS = [
     ("pass_rate", "Cases passed (%)", True),
     ("status_accuracy", "Right outcome: answered / refused / blocked (%)", True),
     ("result_accuracy", "Answered with the right rows (%)", True),
+    ("paraphrase_consistency", "Paraphrase groups where every wording passed (%)", True),
     ("answers_verified_first_time", "Answers whose numbers verified first time (%)", True),
     ("sql_first_try", "SQL accepted on first try (%)", True),
     ("fallbacks", "Fallback answers", False),
@@ -62,6 +63,7 @@ def delta(cur, base, higher_better: bool) -> str:
 def render(run: dict, baseline: dict | None) -> str:
     m, s = run["meta"], run["summary"]
     out = ["# Evaluation report", ""]
+    out += [f"Golden files: `{m.get('golden_file', 'eval/golden.yaml')}`.", ""]
     out += [f"Model `{m['model']}`, prompts `{m['prompt_version']}` (hash `{m['prompt_hash']}`), "
             f"commit `{m['git_commit']}`, run {m['timestamp']}, golden set hash `{m['golden_hash']}`."]
     if m.get("partial_run"):
@@ -132,7 +134,8 @@ def main() -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("run", type=Path)
     parser.add_argument("--baseline", type=Path)
-    parser.add_argument("--out", type=Path, default=ROOT / "eval" / "REPORT.md")
+    parser.add_argument("--out", type=Path, default=ROOT / "eval" / "REPORT.md",
+                        help="e.g. eval/REPORT_unseen.md for the unseen-question run")
     args = parser.parse_args()
 
     run = json.loads(args.run.read_text())

@@ -1,0 +1,275 @@
+# Unseen question set: written after prompt v3 was frozen, and never used to tune it.
+#
+# Two kinds of case:
+#   kpi         standard people-analytics metrics, each with the public source it comes from
+#   paraphrase  the same question worded 3-4 ways (incl. Swedish), sharing one reference;
+#               a group only counts as consistent if every wording passes
+#
+# KPI sources:
+#   AIHR   https://www.aihr.com/blog/hr-metrics-examples  (early turnover, turnover per
+#          manager/department, time since last promotion, turnover cost)
+#   ORACLE https://www.oracle.com/human-capital-management/analytics/  (span of control,
+#          gender ratio, promotion rate, average years of service, high-performer turnover)
+#   KEKA   https://www.keka.com/hr-metrics-examples  (headcount, demographics, employee
+#          satisfaction, retention rate, training)
+#
+# Prompt injections come from a public dataset; see eval/injections.yaml.
+
+cases:
+  # ---------------- KPI-based ----------------
+  - id: k01
+    category: kpi
+    source: AIHR early turnover
+    leader: dept_rd
+    question: What is the attrition rate among people who have been here less than two years?
+    expect: answered
+    reference_sql: >
+      SELECT ROUND(100 * AVG(CASE WHEN attrition THEN 1 ELSE 0 END), 1) AS attrition_rate_pct
+      FROM employees WHERE years_at_company < 2
+
+  - id: k02
+    category: kpi
+    source: AIHR turnover per manager
+    leader: func_sales_exec
+    question: What is the turnover rate under each manager in my organisation?
+    expect: [answered, fallback]
+    reference_sql: >
+      SELECT manager_id, ROUND(100 * AVG(CASE WHEN attrition THEN 1 ELSE 0 END), 1) AS attrition_rate_pct
+      FROM employees GROUP BY manager_id
+
+  - id: k03
+    category: kpi
+    source: AIHR time since last promotion
+    leader: ceo
+    question: What is the average time since last promotion for each job level?
+    expect: answered
+    reference_sql: >
+      SELECT job_level, ROUND(AVG(years_since_last_promotion), 1) AS avg_years_since_promotion
+      FROM employees GROUP BY job_level
+
+  - id: k04
+    category: kpi
+    source: ORACLE promotion rate
+    leader: ceo
+    question: What share of people in each department were promoted in the last year?
+    expect: answered
+    reference_sql: >
+      SELECT department, ROUND(100 * AVG(CASE WHEN years_since_last_promotion = 0 THEN 1 ELSE 0 END), 1) AS promoted_pct
+      FROM employees GROUP BY department
+
+  - id: k05
+    category: kpi
+    source: ORACLE gender ratio
+    leader: ceo
+    question: How many men and how many women are there at each job level?
+    expect: [answered, fallback]
+    reference_sql: >
+      SELECT job_level, gender, COUNT(*) AS headcount FROM employees GROUP BY job_level, gender
+
+  - id: k06
+    category: kpi
+    source: ORACLE average years of service
+    leader: dept_sales
+    question: What is the average length of service by job role?
+    expect: answered
+    reference_sql: >
+      SELECT job_role, ROUND(AVG(years_at_company), 1) AS avg_years_of_service
+      FROM employees GROUP BY job_role
+
+  - id: k07
+    category: kpi
+    source: ORACLE / KEKA high-performer turnover
+    leader: ceo
+    question: What is the attrition rate among people rated Outstanding?
+    expect: answered
+    reference_sql: >
+      SELECT ROUND(100 * AVG(CASE WHEN attrition THEN 1 ELSE 0 END), 1) AS attrition_rate_pct
+      FROM employees WHERE performance_rating = 4
+
+  - id: k08
+    category: kpi
+    source: ORACLE span of control
+    leader: dept_rd
+    question: What is the average span of control in my organisation?
+    expect: [answered, fallback]
+    # no reference: whether the leader's own manager counts is a definition choice
+
+  - id: k09
+    category: kpi
+    source: KEKA headcount
+    leader: ceo
+    question: What is the headcount of each department?
+    expect: answered
+    reference_sql: SELECT department, COUNT(*) AS headcount FROM employees GROUP BY department
+
+  - id: k10
+    category: kpi
+    source: KEKA demographics
+    leader: ceo
+    question: What is the average age in each department?
+    expect: answered
+    reference_sql: >
+      SELECT department, ROUND(AVG(age), 1) AS avg_age FROM employees GROUP BY department
+
+  - id: k11
+    category: kpi
+    source: KEKA employee satisfaction
+    leader: ceo
+    question: What is the average environment satisfaction score by department?
+    expect: answered
+    reference_sql: >
+      SELECT department, ROUND(AVG(environment_satisfaction), 1) AS avg_environment_satisfaction
+      FROM employees GROUP BY department
+
+  - id: k12
+    category: kpi
+    source: KEKA employee satisfaction
+    leader: dept_sales
+    question: What percentage of my people report low job satisfaction?
+    expect: answered
+    reference_sql: >
+      SELECT ROUND(100 * AVG(CASE WHEN job_satisfaction = 1 THEN 1 ELSE 0 END), 1) AS low_satisfaction_pct
+      FROM employees
+
+  - id: k13
+    category: kpi
+    source: AIHR early turnover (new-hire share)
+    leader: ceo
+    question: What share of my organisation joined within the last year?
+    expect: answered
+    reference_sql: >
+      SELECT ROUND(100 * AVG(CASE WHEN years_at_company = 0 THEN 1 ELSE 0 END), 1) AS joined_last_year_pct
+      FROM employees
+
+  - id: k14
+    category: kpi
+    source: KEKA retention / burnout risk
+    leader: dept_rd
+    question: Which job roles have the highest share of people working overtime?
+    expect: [answered, fallback]
+    # no reference: "highest" may reasonably return one role or a ranked list
+
+  - id: k15
+    category: kpi
+    source: KEKA training
+    leader: ceo
+    question: On average, how many trainings did people attend last year, by department?
+    expect: answered
+    reference_sql: >
+      SELECT department, ROUND(AVG(training_times_last_year), 1) AS avg_trainings
+      FROM employees GROUP BY department
+
+  - id: k16
+    category: kpi
+    source: ORACLE compensation analytics
+    leader: ceo
+    question: Is there a difference in average monthly income between men and women?
+    expect: answered
+    reference_sql: >
+      SELECT gender, ROUND(AVG(monthly_income), 1) AS avg_monthly_income FROM employees GROUP BY gender
+
+  - id: k17
+    category: kpi
+    source: AIHR turnover segmentation
+    leader: ceo
+    question: How does the attrition rate differ by job level?
+    expect: answered
+    reference_sql: >
+      SELECT job_level, ROUND(100 * AVG(CASE WHEN attrition THEN 1 ELSE 0 END), 1) AS attrition_rate_pct
+      FROM employees GROUP BY job_level
+
+  - id: k18
+    category: kpi
+    source: KEKA retention rate
+    leader: dept_hr
+    question: What is the retention rate in my organisation?
+    expect: answered
+    reference_sql: >
+      SELECT ROUND(100 * AVG(CASE WHEN attrition THEN 0 ELSE 1 END), 1) AS retention_rate_pct
+      FROM employees
+
+  - id: k19
+    category: kpi
+    source: ORACLE workforce profile
+    leader: ceo
+    question: What is the average total work experience at each job level?
+    expect: answered
+    reference_sql: >
+      SELECT job_level, ROUND(AVG(total_working_years), 1) AS avg_total_working_years
+      FROM employees GROUP BY job_level
+
+  - id: k20
+    category: kpi
+    source: AIHR cost of turnover
+    leader: ceo
+    question: How much did employee turnover cost us last year?
+    expect: [refused, error]
+    # correct behaviour: there is no cost data, so say so instead of inventing a number
+
+  # ---------------- paraphrase groups ----------------
+  # g1: attrition by department
+  - {id: g1a, category: paraphrase, group: g1, leader: ceo, expect: answered,
+     question: "What's our turnover by department?",
+     reference_sql: "SELECT department, ROUND(100 * AVG(CASE WHEN attrition THEN 1 ELSE 0 END), 1) AS pct FROM employees GROUP BY department"}
+  - {id: g1b, category: paraphrase, group: g1, leader: ceo, expect: answered,
+     question: "How many people are we losing in each department, in percent?",
+     reference_sql: "SELECT department, ROUND(100 * AVG(CASE WHEN attrition THEN 1 ELSE 0 END), 1) AS pct FROM employees GROUP BY department"}
+  - {id: g1c, category: paraphrase, group: g1, leader: ceo, expect: answered,
+     question: "churn rate per dept",
+     reference_sql: "SELECT department, ROUND(100 * AVG(CASE WHEN attrition THEN 1 ELSE 0 END), 1) AS pct FROM employees GROUP BY department"}
+  - {id: g1d, category: paraphrase, group: g1, leader: ceo, expect: answered,
+     question: "Vad är personalomsättningen per avdelning?",
+     reference_sql: "SELECT department, ROUND(100 * AVG(CASE WHEN attrition THEN 1 ELSE 0 END), 1) AS pct FROM employees GROUP BY department"}
+
+  # g2: headcount
+  - {id: g2a, category: paraphrase, group: g2, leader: dept_sales, expect: answered,
+     question: "How big is my org?", reference_sql: "SELECT COUNT(*) AS headcount FROM employees"}
+  - {id: g2b, category: paraphrase, group: g2, leader: dept_sales, expect: answered,
+     question: "How many employees do I have?", reference_sql: "SELECT COUNT(*) AS headcount FROM employees"}
+  - {id: g2c, category: paraphrase, group: g2, leader: dept_sales, expect: answered,
+     question: "headcount pls", reference_sql: "SELECT COUNT(*) AS headcount FROM employees"}
+  - {id: g2d, category: paraphrase, group: g2, leader: dept_sales, expect: answered,
+     question: "Hur många anställda har jag?", reference_sql: "SELECT COUNT(*) AS headcount FROM employees"}
+
+  # g3: average income by job role
+  - {id: g3a, category: paraphrase, group: g3, leader: dept_rd, expect: answered,
+     question: "What do people earn on average in each role?",
+     reference_sql: "SELECT job_role, ROUND(AVG(monthly_income), 1) AS avg_income FROM employees GROUP BY job_role"}
+  - {id: g3b, category: paraphrase, group: g3, leader: dept_rd, expect: answered,
+     question: "average monthly pay per job title",
+     reference_sql: "SELECT job_role, ROUND(AVG(monthly_income), 1) AS avg_income FROM employees GROUP BY job_role"}
+  - {id: g3c, category: paraphrase, group: g3, leader: dept_rd, expect: answered,
+     question: "Break down average salary by job role.",
+     reference_sql: "SELECT job_role, ROUND(AVG(monthly_income), 1) AS avg_income FROM employees GROUP BY job_role"}
+
+  # g4: overtime share by department
+  - {id: g4a, category: paraphrase, group: g4, leader: ceo, expect: answered,
+     question: "How common is overtime in each department?",
+     reference_sql: "SELECT department, ROUND(100 * AVG(CASE WHEN over_time THEN 1 ELSE 0 END), 1) AS pct FROM employees GROUP BY department"}
+  - {id: g4b, category: paraphrase, group: g4, leader: ceo, expect: answered,
+     question: "What % of each department works overtime?",
+     reference_sql: "SELECT department, ROUND(100 * AVG(CASE WHEN over_time THEN 1 ELSE 0 END), 1) AS pct FROM employees GROUP BY department"}
+  - {id: g4c, category: paraphrase, group: g4, leader: ceo, expect: answered,
+     question: "overtime rate by dept",
+     reference_sql: "SELECT department, ROUND(100 * AVG(CASE WHEN over_time THEN 1 ELSE 0 END), 1) AS pct FROM employees GROUP BY department"}
+
+  # g5: attrition, overtime vs not
+  - {id: g5a, category: paraphrase, group: g5, leader: ceo, expect: answered,
+     question: "Are people who work overtime more likely to leave?",
+     reference_sql: "SELECT over_time, ROUND(100 * AVG(CASE WHEN attrition THEN 1 ELSE 0 END), 1) AS pct FROM employees GROUP BY over_time"}
+  - {id: g5b, category: paraphrase, group: g5, leader: ceo, expect: answered,
+     question: "Does overtime affect attrition?",
+     reference_sql: "SELECT over_time, ROUND(100 * AVG(CASE WHEN attrition THEN 1 ELSE 0 END), 1) AS pct FROM employees GROUP BY over_time"}
+  - {id: g5c, category: paraphrase, group: g5, leader: ceo, expect: answered,
+     question: "attrition: overtime vs no overtime",
+     reference_sql: "SELECT over_time, ROUND(100 * AVG(CASE WHEN attrition THEN 1 ELSE 0 END), 1) AS pct FROM employees GROUP BY over_time"}
+
+  # g6: average age
+  - {id: g6a, category: paraphrase, group: g6, leader: dept_hr, expect: answered,
+     question: "How old are the people in my organisation on average?",
+     reference_sql: "SELECT ROUND(AVG(age), 1) AS avg_age FROM employees"}
+  - {id: g6b, category: paraphrase, group: g6, leader: dept_hr, expect: answered,
+     question: "mean employee age", reference_sql: "SELECT ROUND(AVG(age), 1) AS avg_age FROM employees"}
+  - {id: g6c, category: paraphrase, group: g6, leader: dept_hr, expect: answered,
+     question: "What's the average age of my people?",
+     reference_sql: "SELECT ROUND(AVG(age), 1) AS avg_age FROM employees"}

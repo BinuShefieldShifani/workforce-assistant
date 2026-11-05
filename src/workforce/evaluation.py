@@ -61,6 +61,17 @@ class GoldenCase:
     expect: list[str]
     reference_sql: str | None = None
     max_words: int = 120
+    group: str | None = None   # paraphrase group: variants of one question share a group
+    source: str | None = None  # where the question comes from (KPI list, dataset, ...)
+
+
+def load_golden_files(paths: list[Path]) -> list[GoldenCase]:
+    cases = [c for p in paths for c in load_golden(p)]
+    ids = [c.id for c in cases]
+    dupes = sorted({i for i in ids if ids.count(i) > 1})
+    if dupes:
+        raise ValueError(f"duplicate case ids across golden files: {dupes}")
+    return cases
 
 
 def load_golden(path: Path) -> list[GoldenCase]:
@@ -76,6 +87,8 @@ def load_golden(path: Path) -> list[GoldenCase]:
             expect=[expect] if isinstance(expect, str) else list(expect),
             reference_sql=raw.get("reference_sql"),
             max_words=raw.get("max_words", 120),
+            group=raw.get("group"),
+            source=raw.get("source"),
         ))
     ids = [c.id for c in cases]
     if len(ids) != len(set(ids)):
@@ -232,6 +245,7 @@ class CaseResult:
     category: str
     question: str
     leader_id: int
+    group: str | None
     expect: list[str]
     status: str
     status_ok: bool
@@ -277,6 +291,7 @@ def score_case(case: GoldenCase, leader_id: int, question: str, res: AgentResult
     passed = status_ok and (result_ok is not False) and not style
     return CaseResult(
         id=case.id, category=case.category, question=question, leader_id=leader_id,
+        group=case.group,
         expect=case.expect, status=res.status, status_ok=status_ok,
         result_checked=result_checked, result_ok=result_ok, result_note=note,
         style_issues=style, passed=passed, answer=res.answer, sql=res.sql,
@@ -332,8 +347,15 @@ def summarize(results: list[CaseResult]) -> dict:
         c["passed"] += r.passed
     for c in by_cat.values():
         c["pass_rate"] = _pct(c["passed"], c["cases"])
+    groups: dict[str, list[bool]] = {}
+    for r in results:
+        if r.group:
+            groups.setdefault(r.group, []).append(r.passed)
+    consistent = sum(all(v) for v in groups.values())
     return {
         "cases": n,
+        "paraphrase_groups": len(groups),
+        "paraphrase_consistency": _pct(consistent, len(groups)),
         "passed": sum(r.passed for r in results),
         "pass_rate": _pct(sum(r.passed for r in results), n),
         "status_accuracy": _pct(sum(r.status_ok for r in results), n),
