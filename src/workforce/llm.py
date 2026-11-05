@@ -43,7 +43,7 @@ class AnthropicLLM(LLM):
         super().__init__()
         import anthropic
 
-        self.client = anthropic.Anthropic()
+        self.client = anthropic.Anthropic(max_retries=6)
         self.model = model or os.getenv("LLM_MODEL", "claude-sonnet-5-5")
         self.max_tokens = max_tokens
 
@@ -72,7 +72,7 @@ class OpenAILLM(LLM):
         super().__init__()
         from openai import OpenAI
 
-        self.client = OpenAI(base_url=os.getenv("OPENAI_BASE_URL") or None)
+        self.client = OpenAI(base_url=os.getenv("OPENAI_BASE_URL") or None, max_retries=6)
         self.model = model or os.environ["LLM_MODEL"]
 
     def complete(self, system: str, user: str) -> str:

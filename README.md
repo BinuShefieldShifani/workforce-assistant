@@ -14,7 +14,7 @@ generates a synthetic org tree on top of it (company, departments, functions, te
 - [x] Day 1: data, synthetic org hierarchy, DuckDB and Snowflake loaders, tests, CI
 - [x] Day 2: access scoping and small-group suppression
 - [x] Day 3: text-to-SQL agent with answer verification
-- [ ] Day 4: golden question set and eval report
+- [x] Day 4: golden question set, eval runner, versioned prompts, eval report
 - [ ] Day 5: FastAPI back end, Next.js front end, deployment
 
 ## Data model
@@ -47,6 +47,25 @@ question + leader id
 The privacy rules live in code, not in the prompt, so they hold even when the model
 writes a bad query. Every answer comes back with its status, SQL, steps, token use and
 latency.
+
+## Evaluation
+
+`eval/golden.yaml` holds 40 questions in four groups: basic aggregates, org-structure
+questions, privacy attacks and out-of-scope requests. Each says which outcomes are
+correct, and 28 have a hand-written reference query. For those, the agent's result
+rows must match the reference rows after both go through the same privacy rules.
+Comparing rows rather than SQL text lets equivalent queries pass, and catches queries
+that answer a slightly different question even when every number in the answer is
+"verified".
+
+```bash
+python scripts/run_eval.py --prompt-version v1      # baseline
+python scripts/run_eval.py --prompt-version v2      # with the prompt fixes
+python scripts/make_report.py eval/results/<v2>.json --baseline eval/results/<v1>.json
+```
+
+Results are saved with the model, prompt version, prompt hash and git commit, and
+`eval/REPORT.md` shows the comparison. See that file for the current numbers.
 
 ## Known limits
 
@@ -87,6 +106,7 @@ cp .env.example .env            # add your Groq key as OPENAI_API_KEY
 python scripts/ask.py --list-leaders
 python scripts/ask.py --leader 374 "What is the attrition rate by job role?"
 python scripts/smoke_test.py    # 6 scored questions + 1 informational
+python scripts/run_eval.py       # 40-question golden set, see Evaluation
 ```
 
 Optional, Snowflake:

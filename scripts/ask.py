@@ -53,6 +53,15 @@ def main() -> int:
     print(f"Answer: {result.answer}\n")
     if result.sql:
         print(f"SQL:    {result.sql}")
+    if result.rows:
+        import pandas as pd
+
+        table = pd.DataFrame(result.rows)
+        print(f"\nResult ({len(table)} rows):")
+        print(table.head(20).to_string(index=False))
+        if len(table) > 20:
+            print(f"... {len(table) - 20} more rows")
+        print()
     if result.hidden_groups:
         print(f"Hidden groups: {result.hidden_groups}")
     if result.verification:
