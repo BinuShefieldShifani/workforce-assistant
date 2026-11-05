@@ -92,3 +92,12 @@ def test_reasoning_tags_are_stripped():
 
     raw = '<think>\nlet me count {x}\n</think>\n{"sql": "SELECT 1"}'
     assert strip_reasoning(raw) == '{"sql": "SELECT 1"}'
+
+
+def test_prompt_versions_differ_and_are_selectable(db_path):
+    from workforce.prompts import get_prompts
+
+    v1, v2 = get_prompts("v1"), get_prompts("v2")
+    assert v1.hash != v2.hash
+    assert "team IS NULL OR team" in v2.sql_system and "team IS NULL" not in v1.sql_system
+    assert WorkforceAgent(db_path, FakeLLM([]), prompt_version="v1").prompts.version == "v1"

@@ -23,11 +23,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from workforce import prompts
 from workforce.config import MIN_GROUP_SIZE
 from workforce.guard import GROUP_SIZE_COL, SQLRejected, guard
 from workforce.llm import LLM
 from workforce.privacy import QueryBlocked, SafeResult, run_safe
+from workforce.prompts import PromptSet, get_prompts
 from workforce.scope import Leader, ScopedDB, get_leader
 from workforce.verify import Verification, verify_answer
 
@@ -87,9 +87,10 @@ def fallback_answer(rows: pd.DataFrame, hidden: int) -> str:
 
 
 class WorkforceAgent:
-    def __init__(self, db_path: Path, llm: LLM):
+    def __init__(self, db_path: Path, llm: LLM, prompt_version: str | None = None):
         self.db_path = Path(db_path)
         self.llm = llm
+        self.prompts: PromptSet = get_prompts(prompt_version)
 
     def ask(self, leader_id: int, question: str) -> AgentResult:
         start = time.perf_counter()
@@ -122,8 +123,8 @@ class WorkforceAgent:
                              "so no statistics can be shown.")
             result.steps.append("blocked: scope too small")
             return
-        system = prompts.SQL_SYSTEM.format(schema=db.schema_text())
-        user = prompts.SQL_USER.format(question=question)
+        system = self.prompts.sql_system.format(schema=db.schema_text())
+        user = self.prompts.sql_user.format(question=question)
 
         safe: SafeResult | None = None
         for attempt in range(1, MAX_SQL_ATTEMPTS + 1):
@@ -156,7 +157,7 @@ class WorkforceAgent:
                 except Exception as e:  # DuckDB errors: bad column, bad GROUP BY, ...
                     error = f"database: {str(e).splitlines()[0]}"
             result.steps.append(f"sql attempt {attempt} rejected: {error}")
-            user = prompts.SQL_RETRY.format(question=question, previous_sql=sql, error=error)
+            user = self.prompts.sql_retry.format(question=question, previous_sql=sql, error=error)
 
         if safe is None:
             result.status = "error"
@@ -173,7 +174,7 @@ class WorkforceAgent:
             )
             return
 
-        base = prompts.ANSWER_USER.format(
+        base = self.prompts.answer_user.format(
             question=question,
             sql=result.sql,
             table=table_text(safe.rows),
@@ -182,7 +183,7 @@ class WorkforceAgent:
         user = base
         check: Verification | None = None
         for attempt in range(1, MAX_ANSWER_ATTEMPTS + 1):
-            answer = self.llm.complete(prompts.ANSWER_SYSTEM, user).strip()
+            answer = self.llm.complete(self.prompts.answer_system, user).strip()
             check = verify_answer(answer, safe.rows, question=question, sql=result.sql or "")
             if check.passed:
                 result.status = "answered"
@@ -190,7 +191,7 @@ class WorkforceAgent:
                 result.steps.append(f"answer verified on attempt {attempt}")
                 break
             result.steps.append(f"answer attempt {attempt} unsupported numbers: {check.unsupported}")
-            user = prompts.ANSWER_RETRY.format(base=base, unsupported=", ".join(check.unsupported))
+            user = self.prompts.answer_retry.format(base=base, unsupported=", ".join(check.unsupported))
         else:
             result.status = "fallback"
             result.answer = fallback_answer(safe.rows.drop(columns=[GROUP_SIZE_COL]),
