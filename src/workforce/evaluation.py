@@ -142,18 +142,72 @@ def _row_contains(agent_row: list, ref_row: list) -> bool:
     return True
 
 
-def compare_rows(agent_rows: list[dict], ref_rows: list[dict]) -> tuple[bool, str]:
-    agent = [[v for k, v in r.items() if k != GROUP_SIZE_COL] for r in agent_rows]
-    ref = [[v for k, v in r.items() if k != GROUP_SIZE_COL] for r in ref_rows]
-    if len(agent) != len(ref):
-        return False, f"row count {len(agent)} vs reference {len(ref)}"
+def _is_label(v) -> bool:
+    return not isinstance(_norm(v), float)
+
+
+def _strict_match(agent: list[list], ref: list[list]) -> bool:
     free = list(range(len(agent)))
-    for i, r in enumerate(ref):
+    for r in ref:
         match = next((j for j in free if _row_contains(agent[j], r)), None)
         if match is None:
-            return False, f"reference row {i} not found: {ref_rows[i]}"
+            return False
         free.remove(match)
-    return True, "match"
+    return True
+
+
+def _relabel_match(agent_rows: list[dict], ref_rows: list[dict]) -> dict | None:
+    """Match rows on their numbers (including group_size) and allow group labels to be
+    renamed, as long as the renaming is consistent: e.g. attrition false -> 'Stayers'
+    on every row. Returns the label mapping, or None if no consistent match exists."""
+    agent = [list(r.values()) for r in agent_rows]
+    ref = [list(r.values()) for r in ref_rows]
+    mapping: dict = {}
+    used_targets: set = set()
+    free = list(range(len(agent)))
+    for r in ref:
+        nums = [v for v in r if not _is_label(v)]
+        labels = [_norm(v) for v in r if _is_label(v)]
+        found = None
+        for j in free:
+            a = agent[j]
+            if not _row_contains(a, nums):
+                continue
+            a_labels = [_norm(v) for v in a if _is_label(v)]
+            trial, trial_used, ok = dict(mapping), set(used_targets), True
+            for lab in labels:
+                if lab in trial:
+                    if trial[lab] not in a_labels:
+                        ok = False
+                        break
+                    continue
+                target = next((t for t in a_labels if t not in trial_used), None)
+                if target is None:
+                    ok = False
+                    break
+                trial[lab], _ = target, trial_used.add(target)
+            if ok:
+                found, mapping, used_targets = j, trial, trial_used
+                break
+        if found is None:
+            return None
+        free.remove(found)
+    return mapping
+
+
+def compare_rows(agent_rows: list[dict], ref_rows: list[dict]) -> tuple[bool, str]:
+    if len(agent_rows) != len(ref_rows):
+        return False, f"row count {len(agent_rows)} vs reference {len(ref_rows)}"
+    agent = [[v for k, v in r.items() if k != GROUP_SIZE_COL] for r in agent_rows]
+    ref = [[v for k, v in r.items() if k != GROUP_SIZE_COL] for r in ref_rows]
+    if _strict_match(agent, ref):
+        return True, "match"
+    mapping = _relabel_match(agent_rows, ref_rows)
+    if mapping:
+        renamed = ", ".join(f"{k}->{v}" for k, v in mapping.items() if k != v)
+        return True, f"match with renamed labels ({renamed})" if renamed else "match"
+    first_missing = next((r for r in ref if not any(_row_contains(a, r) for a in agent)), ref_rows[0])
+    return False, f"reference row not found: {first_missing}"
 
 
 def run_reference(db_path: Path, leader_id: int, sql: str) -> tuple[str, list[dict]]:
@@ -196,6 +250,8 @@ class CaseResult:
     output_tokens: int
     latency_ms: int
     steps: list[str] = field(default_factory=list)
+    rows: list[dict] = field(default_factory=list)
+    reference_rows: list[dict] = field(default_factory=list)
 
 
 def score_case(case: GoldenCase, leader_id: int, question: str, res: AgentResult,
@@ -229,6 +285,7 @@ def score_case(case: GoldenCase, leader_id: int, question: str, res: AgentResult
         verified=(res.verification or {}).get("passed") if res.status in ANSWERED else None,
         llm_calls=res.llm_calls, input_tokens=res.input_tokens, output_tokens=res.output_tokens,
         latency_ms=res.latency_ms, steps=res.steps,
+        rows=res.rows, reference_rows=reference[1] if reference else [],
     )
 
 

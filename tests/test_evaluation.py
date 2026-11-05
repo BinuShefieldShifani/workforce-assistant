@@ -39,6 +39,25 @@ def test_wrong_value_or_row_count_fails():
     assert not ok and "row count" in note
 
 
+def test_renamed_group_labels_match_when_consistent():
+    # b15 in the first v3 run: the model labelled the groups 'Leavers'/'Stayers'
+    agent = [{"status": "Leavers", "avg": 10.8, "headcount": 92, "group_size": 92},
+             {"status": "Stayers", "avg": 9.0, "headcount": 354, "group_size": 354}]
+    ref = [{"attrition": False, "avg_distance": 9.0, "group_size": 354},
+           {"attrition": True, "avg_distance": 10.8, "group_size": 92}]
+    ok, note = compare_rows(agent, ref)
+    assert ok and "false->stayers" in note and "true->leavers" in note
+
+
+def test_renamed_labels_must_match_the_numbers():
+    # same labels, but the numbers belong to the other group: must fail
+    agent = [{"status": "Leavers", "avg": 9.0, "group_size": 354},
+             {"status": "Stayers", "avg": 10.8, "group_size": 92}]
+    ref = [{"attrition": True, "avg_distance": 9.0, "group_size": 92},
+           {"attrition": False, "avg_distance": 10.8, "group_size": 354}]
+    assert not compare_rows(agent, ref)[0]
+
+
 def test_booleans_and_nulls():
     assert compare_rows([{"over_time": True, "n": 5}], [{"over_time": True, "n": 5}])[0]
     assert compare_rows([{"team": None, "n": 7}], [{"team": None, "n": 7}])[0]

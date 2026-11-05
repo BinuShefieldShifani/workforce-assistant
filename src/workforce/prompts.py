@@ -9,6 +9,11 @@ smoke test showed:
 plus one found while writing the golden set:
   - "which team has the highest X" picks a tiny team, which privacy then hides
 
+v3 adds two lines after the v1 vs v2 eval:
+  - comparing groups: use GROUP BY, not CASE inside AVG (b15 failed twice on this)
+  - don't filter out NULLs of the grouping column (o01: WHERE team IS NOT NULL left
+    out only the unit head, so the differencing rule correctly blocked it)
+
 Pick the version with PROMPT_VERSION (default below). The eval records which
 version and a hash of its text, so results stay comparable.
 """
@@ -19,7 +24,7 @@ import hashlib
 import os
 from dataclasses import dataclass
 
-DEFAULT_VERSION = "v2"
+DEFAULT_VERSION = "v3"
 
 
 @dataclass(frozen=True)
@@ -142,7 +147,26 @@ Refuse instead of writing SQL when the question:
     answer_retry=_ANSWER_RETRY,
 )
 
-VERSIONS = {"v1": V1, "v2": V2}
+_V3_EXTRA = """- To compare a value between groups (leavers vs stayers, overtime vs not),
+  GROUP BY that column. Do not compute per-group averages with CASE inside AVG or SUM.
+- Do not add "WHERE <col> IS NOT NULL" for the column you group by. Small groups,
+  including the NULL group, are hidden automatically; filtering them out instead
+  gets the whole query blocked.
+"""
+_HIGHEST = '- For "which group has the highest/lowest X"'
+assert _HIGHEST in V2.sql_system
+
+V3 = PromptSet(
+    version="v3",
+    sql_system=V2.sql_system.replace(_HIGHEST, _V3_EXTRA + _HIGHEST),
+    sql_user=_SQL_USER,
+    sql_retry=_SQL_RETRY,
+    answer_system=V2.answer_system,
+    answer_user=_ANSWER_USER,
+    answer_retry=_ANSWER_RETRY,
+)
+
+VERSIONS = {"v1": V1, "v2": V2, "v3": V3}
 
 
 def get_prompts(version: str | None = None) -> PromptSet:

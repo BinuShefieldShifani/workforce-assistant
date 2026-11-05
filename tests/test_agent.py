@@ -101,3 +101,13 @@ def test_prompt_versions_differ_and_are_selectable(db_path):
     assert v1.hash != v2.hash
     assert "team IS NULL OR team" in v2.sql_system and "team IS NULL" not in v1.sql_system
     assert WorkforceAgent(db_path, FakeLLM([]), prompt_version="v1").prompts.version == "v1"
+
+
+def test_v3_adds_group_by_and_null_guidance():
+    from workforce.prompts import get_prompts
+
+    v2, v3 = get_prompts("v2"), get_prompts("v3")
+    assert v3.hash != v2.hash
+    assert "GROUP BY that column" in v3.sql_system and "GROUP BY that column" not in v2.sql_system
+    assert "IS NOT NULL" in v3.sql_system
+    assert v3.answer_system == v2.answer_system

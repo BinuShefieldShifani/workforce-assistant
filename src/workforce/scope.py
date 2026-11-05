@@ -36,7 +36,7 @@ COLUMN_DOCS = {
     "attrition": "TRUE if the person has left the company",
     "business_travel": "'Non-Travel', 'Travel_Rarely' or 'Travel_Frequently'",
     "department": "'Research & Development', 'Sales' or 'Human Resources'",
-    "distance_from_home": "commute distance, in km",
+    "distance_from_home": "commute distance (the dataset gives no unit)",
     "education": "1 Below College, 2 College, 3 Bachelor, 4 Master, 5 Doctor",
     "education_field": "field of study, e.g. 'Life Sciences', 'Medical', 'Marketing'",
     "environment_satisfaction": "1 Low, 2 Medium, 3 High, 4 Very High",
