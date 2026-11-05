@@ -36,7 +36,8 @@ def git_commit() -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--golden", type=Path, default=GOLDEN)
+    parser.add_argument("--golden", type=Path, nargs="+", default=[GOLDEN],
+                        help="one or more golden files, run together")
     parser.add_argument("--prompt-version", default=None, help="v1 or v2 (default: PROMPT_VERSION or v2)")
     parser.add_argument("--ids", nargs="*", help="only run these case ids")
     parser.add_argument("--delay", type=float, default=3.0,
@@ -50,10 +51,10 @@ def main() -> int:
         pass
 
     from workforce.agent import WorkforceAgent
-    from workforce.evaluation import load_golden, results_to_dict, run_eval, summarize
+    from workforce.evaluation import load_golden_files, results_to_dict, run_eval, summarize
     from workforce.llm import get_llm
 
-    cases = load_golden(args.golden)
+    cases = load_golden_files(args.golden)
     if args.ids:
         cases = [c for c in cases if c.id in set(args.ids)]
         if not cases:
@@ -74,20 +75,25 @@ def main() -> int:
         "prompt_version": agent.prompts.version,
         "prompt_hash": agent.prompts.hash,
         "git_commit": git_commit(),
-        "golden_file": str(args.golden.relative_to(ROOT)) if args.golden.is_relative_to(ROOT)
-        else str(args.golden),
-        "golden_hash": hashlib.sha256(args.golden.read_bytes()).hexdigest()[:10],
+        "golden_file": ", ".join(
+            str(g.resolve().relative_to(ROOT)) if g.resolve().is_relative_to(ROOT) else str(g)
+            for g in args.golden),
+        "golden_hash": hashlib.sha256(b"".join(g.read_bytes() for g in args.golden)).hexdigest()[:10],
         "partial_run": bool(args.ids),
     }
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     safe_model = llm.model.replace("/", "-")
-    out = RESULTS_DIR / f"{started:%Y%m%d-%H%M%S}_{safe_model}_{agent.prompts.version}.json"
+    label = "golden" if args.golden == [GOLDEN] else "-".join(g.stem for g in args.golden)
+    out = RESULTS_DIR / f"{started:%Y%m%d-%H%M%S}_{safe_model}_{agent.prompts.version}_{label}.json"
     out.write_text(json.dumps({"meta": meta, "summary": summary,
                                "results": results_to_dict(results)}, indent=2, default=str))
 
     print(f"\nPassed {summary['passed']}/{summary['cases']} ({summary['pass_rate']}%)")
     print(f"Status accuracy {summary['status_accuracy']}%, result accuracy "
           f"{summary['result_accuracy']}% of {summary['result_checked']} checked")
+    if summary["paraphrase_groups"]:
+        print(f"Paraphrase groups fully passed: {summary['paraphrase_consistency']}% "
+              f"of {summary['paraphrase_groups']}")
     print(f"Latency p50 {summary['latency_p50_ms']} ms, p95 {summary['latency_p95_ms']} ms")
     print(f"\nSaved {out.relative_to(ROOT)}")
     return 0

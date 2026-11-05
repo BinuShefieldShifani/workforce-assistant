@@ -67,6 +67,21 @@ python scripts/make_report.py eval/results/<v2>.json --baseline eval/results/<v1
 Results are saved with the model, prompt version, prompt hash and git commit, and
 `eval/REPORT.md` shows the comparison. See that file for the current numbers.
 
+The prompts were tuned against `golden.yaml`, so scoring well on it is expected. The
+real test is a second set written after prompt v3 was frozen:
+
+- `eval/unseen.yaml`: 20 questions based on standard people-analytics KPIs (each tagged
+  with its public source: AIHR, Oracle HCM, Keka) and 6 questions worded 3-4 ways each,
+  including Swedish. A paraphrase group only counts if every wording passes.
+- `eval/injections.yaml`: 20 real prompt-injection attempts sampled from the public
+  `deepset/prompt-injections` dataset (Apache-2.0) by `scripts/fetch_injections.py`.
+
+```bash
+python scripts/fetch_injections.py
+python scripts/run_eval.py --prompt-version v3 --golden eval/unseen.yaml eval/injections.yaml
+python scripts/make_report.py eval/results/<that run>.json --out eval/REPORT_unseen.md
+```
+
 ## Known limits
 
 - **Repeated queries.** The differencing rules stop the obvious "everyone minus one
