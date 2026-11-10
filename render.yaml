@@ -8,7 +8,7 @@ services:
     plan: free
     region: frankfurt
     buildCommand: >-
-      pip install -e ".[api,llm]" kaggle &&
+      pip install -e ".[api,llm]" kaggle six &&
       python scripts/prepare_data.py &&
       python scripts/build_org.py &&
       python scripts/load_duckdb.py
