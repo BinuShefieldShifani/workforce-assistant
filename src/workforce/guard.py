@@ -21,12 +21,14 @@ carries the number of people behind it. The privacy layer needs that number.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import sqlglot
 from sqlglot import exp
 
 from workforce.config import MAX_RESULT_ROWS
+from workforce.policy import UNIT_TOKENS
 
 ALLOWED_TABLES = {"employees"}
 ALLOWED_AGGREGATES = (exp.Count, exp.Sum, exp.Avg)
@@ -43,6 +45,7 @@ class GuardedQuery:
     original_sql: str          # what the LLM wrote
     where_sql: str | None      # the WHERE condition, used by the complement check
     metric_columns: list[str]  # output columns that hold aggregates
+    count_columns: list[str] = None  # metric columns that count a subgroup of people
 
 
 IDENTIFYING_COLUMNS = {"employee_id", "manager_id"}
@@ -88,6 +91,23 @@ def _check_aggregate_argument(agg: exp.AggFunc) -> None:
         f"the argument of {agg.key.upper()} must be a column or a CASE indicator; "
         "put arithmetic outside the aggregate, e.g. 100 * AVG(...)"
     )
+
+
+def _is_count_of_people(projection: exp.Expression) -> bool:
+    """True for a column that counts a subgroup, e.g. SUM(CASE WHEN gender = 'Female' THEN 1 END)
+    or COUNT(team). Rates like 100 * AVG(...) and COUNT(*) (= group_size) are not."""
+    node = projection.this if isinstance(projection, exp.Alias) else projection
+    while isinstance(node, (exp.Round, exp.Cast, exp.TryCast, exp.Paren)):
+        node = node.this
+    if isinstance(node, exp.Count):
+        arg = node.this
+        return arg is not None and not isinstance(arg, (exp.Star, exp.Distinct))
+    if isinstance(node, exp.Sum):
+        arg = _strip(node.this)
+        return isinstance(arg, (exp.Case, exp.If, exp.Cast)) or (
+            isinstance(node.this, (exp.Cast, exp.TryCast)) and isinstance(arg, exp.Column)
+        )
+    return False
 
 
 def _directly_counted(col: exp.Column) -> bool:
@@ -154,9 +174,17 @@ def guard(sql: str, max_rows: int = MAX_RESULT_ROWS) -> GuardedQuery:
             "the query must aggregate (COUNT, SUM or AVG); individual-level results are not allowed"
         )
     names_out = [p.alias_or_name for p in projections]
+    for name in names_out:
+        tokens = set(re.split(r"[_\W]+", name.lower()))
+        if tokens & UNIT_TOKENS:
+            raise SQLRejected(
+                f"column name '{name}' names a currency or unit; the data has none, "
+                "so name columns without units (e.g. avg_monthly_income)"
+            )
     if GROUP_SIZE_COL in names_out:
         raise SQLRejected(f"'{GROUP_SIZE_COL}' is a reserved column name")
     metric_columns = [n for n, m in zip(names_out, metric_flags, strict=True) if m]
+    count_columns = [n for n, p in zip(names_out, projections, strict=True) if _is_count_of_people(p)]
 
     where = tree.args.get("where")
     where_sql = where.this.sql(dialect="duckdb") if where is not None else None
@@ -181,4 +209,5 @@ def guard(sql: str, max_rows: int = MAX_RESULT_ROWS) -> GuardedQuery:
         original_sql=sql,
         where_sql=where_sql,
         metric_columns=metric_columns,
+        count_columns=count_columns,
     )

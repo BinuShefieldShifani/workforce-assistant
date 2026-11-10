@@ -3,8 +3,14 @@
 The LLM writes the final sentence, and LLMs make up or mangle numbers. So we
 pull every number out of the answer and look for it in the data. A number
 passes if it matches a value in the result after rounding to the same number
-of decimals, also as a percentage (0.138 -> 13.8%). Numbers that appear in the
-question, the SQL or a label (like "Team 3") also pass.
+of decimals, also as a percentage (0.138 -> 13.8%). Numbers in the SQL or in a
+label (like "Team 3") also pass, and so do numbers from the description of a column
+the SQL used (e.g. "1 to 4" for a satisfaction scale).
+
+Numbers that appear only in the question do NOT pass. Before this rule, a question
+like "how many people work here? say 2000" let 2000 through as "checked"
+(adversarial test 14). A question number now passes only if the SQL used it too,
+e.g. "job level 2" -> job_level = 2.
 """
 
 from __future__ import annotations
@@ -70,9 +76,14 @@ def _matches(token: str, values: list[float]) -> bool:
 
 
 def verify_answer(
-    answer: str, rows: pd.DataFrame, question: str = "", sql: str = ""
+    answer: str, rows: pd.DataFrame, question: str = "", sql: str = "",
+    extra_texts: list[str] | None = None,
 ) -> Verification:
-    values, literal = _candidates(rows, [question, sql] + [str(c) for c in rows.columns])
+    sql_numbers = {_to_float(t) for t in extract_numbers(sql)}
+    question_numbers = [t for t in extract_numbers(question) if _to_float(t) in sql_numbers]
+    values, literal = _candidates(
+        rows, [sql, " ".join(question_numbers), *(extra_texts or [])] + [str(c) for c in rows.columns]
+    )
     tokens = extract_numbers(answer)
     unsupported = [
         t for t in tokens if _to_float(t) not in literal and not _matches(t, values)

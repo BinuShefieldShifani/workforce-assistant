@@ -14,6 +14,20 @@ v3 adds two lines after the v1 vs v2 eval:
   - don't filter out NULLs of the grouping column (o01: WHERE team IS NOT NULL left
     out only the unit head, so the differencing rule correctly blocked it)
 
+v4 adds the fixes from the 20 adversarial tests (eval/adversarial.yaml). v1-v3 are kept
+unchanged; v3 is the runtime fallback when v4 cannot produce an allowed query.
+  - refuse recommendations about cutting, firing or demoting people or teams (finding 7)
+  - never name a unit or currency the data doesn't have, in answers or column names (2)
+  - no internal terms such as "group size" or "query" in answers (3)
+  - vague or follow-up questions: state the interpretation (4)
+  - coded scales: say the scale; rankings: LIMIT 3 so ties show (5)
+  - "why" questions: say the data shows what, not why (1)
+  - select only what was asked, especially pay and performance (10)
+  - questions with several parts: split into up to 3 separate questions (11)
+  - refusals in plain language, without system internals (11)
+  - hidden groups: say "hidden for privacy", not "fewer than 5" (9)
+Several of these are also enforced in code (policy.py, guard.py, verify.py).
+
 Pick the version with PROMPT_VERSION (default below). The eval records which
 version and a hash of its text, so results stay comparable.
 """
@@ -24,7 +38,8 @@ import hashlib
 import os
 from dataclasses import dataclass
 
-DEFAULT_VERSION = "v3"
+DEFAULT_VERSION = "v4"
+DEFAULT_FALLBACK = "v3"  # used when v4 cannot produce an allowed query; see agent.py
 
 
 @dataclass(frozen=True)
@@ -166,7 +181,92 @@ V3 = PromptSet(
     answer_retry=_ANSWER_RETRY,
 )
 
-VERSIONS = {"v1": V1, "v2": V2, "v3": V3}
+_V4_SQL = """You turn a leader's question about their own organisation into one DuckDB SQL query.
+
+{schema}
+
+""" + _SQL_RULES + """
+- team is NULL for people above team level (unit heads and their direct reports).
+  To exclude one team, write (team IS NULL OR team <> 'X'), not just team <> 'X'.
+""" + _V3_EXTRA + """- For "which group has the highest/lowest X", add HAVING COUNT(*) >= 5 and use
+  ORDER BY ... LIMIT 3, so ties and runners-up are visible.
+- Select only the measures the question asks for. Do not add pay, performance or other
+  sensitive measures that were not asked about.
+- Column names must not contain a currency or unit (no _eur, _usd, _km). The data has no
+  currency and no units for distance.
+
+Refuse instead of writing SQL when the question:
+- is about a named or specific individual (an employee id, "the head of", "the oldest person"),
+- asks to list people,
+- asks for a single person's value such as the highest or lowest salary,
+- asks which people, teams or departments to cut, let go, fire, demote or replace, or
+  asks for any other recommendation about people's jobs, even for groups,
+- needs data that is not in these columns (bonuses, dates, trends over time, forecasts,
+  ethnicity), or is not about the workforce.
+Write refusals for a business leader: one plain sentence, no mention of SQL, queries,
+tables, columns or rules.
+
+If the question asks for two or three separate things that need different breakdowns
+(e.g. "total headcount and the department with the lowest income"), do not write SQL;
+split it into standalone questions instead.
+
+If the question is vague or seems to continue an earlier conversation ("and what about
+Sales?"), you cannot see any earlier question. Choose the most useful reading and say
+what you assumed.
+
+Reply with JSON only, no markdown, in one of these forms:
+{{"sql": "<query>"}}
+{{"sql": "<query>", "assumption": "<what you took the question to mean>"}}
+{{"parts": ["<standalone question 1>", "<standalone question 2>"]}}
+{{"refuse": "<one plain sentence explaining why>"}}"""
+
+_V4_ANSWER = """You answer a leader's question using only the query result you are given.
+
+- 1 to 4 short sentences, plain language for a business leader.
+- Use only numbers that appear in the result. Do not calculate new numbers,
+  do not sum or subtract rows, do not estimate.
+- No currency symbols, currency names or units the data does not have. Incomes are plain
+  numbers. If the leader asked for a currency or unit, say the data does not specify one
+  and give the plain numbers.
+- Never use internal words such as "group size", "group_size", "query", "SQL", "row" or
+  "database". group_size in the result is the number of people; call it "people".
+- For coded scales, give the scale: satisfaction, involvement and environment scores run
+  from 1 (Low) to 4 (Very High); work-life balance from 1 (Bad) to 4 (Best); performance
+  rating 3 is Excellent and 4 is Outstanding.
+- If the result has more than 8 rows, give the 2 or 3 highest and lowest and say the
+  full table is shown with the answer. If the top values are tied, say so.
+- If some groups were hidden for privacy, say so in one sentence without saying how many
+  people they contain.
+- If the question asks why, or about causes, give the figures and add one short sentence
+  saying the data shows what happened, not why.
+- Never recommend actions about people, such as cutting, firing or replacing anyone.
+- Do not guess at causes or talk about individuals. No markdown, no headings."""
+
+_V4_ANSWER_RETRY = """{base}
+
+Your previous answer had these problems: {problems}.
+Rewrite it to fix them, using only numbers that appear in the result."""
+
+V4 = PromptSet(
+    version="v4",
+    sql_system=_V4_SQL,
+    sql_user=_SQL_USER,
+    sql_retry=_SQL_RETRY,
+    answer_system=_V4_ANSWER,
+    answer_user=_ANSWER_USER,
+    answer_retry=_V4_ANSWER_RETRY,
+)
+
+VERSIONS = {"v1": V1, "v2": V2, "v3": V3, "v4": V4}
+
+
+def get_fallback_prompts(primary: PromptSet) -> PromptSet | None:
+    """The prompt set to retry with when the primary one can't produce an allowed query.
+    FALLBACK_PROMPT_VERSION=none turns it off."""
+    version = os.getenv("FALLBACK_PROMPT_VERSION", DEFAULT_FALLBACK)
+    if version.lower() == "none" or version == primary.version:
+        return None
+    return VERSIONS.get(version)
 
 
 def get_prompts(version: str | None = None) -> PromptSet:

@@ -15,7 +15,7 @@ generates a synthetic org tree on top of it (company, departments, functions, te
 - [x] Day 2: access scoping and small-group suppression
 - [x] Day 3: text-to-SQL agent with answer verification
 - [x] Day 4: golden question set, eval runner, versioned prompts, eval report
-- [ ] Day 5: FastAPI back end, Next.js front end, deployment
+- [x] Day 5: small-cell masking, FastAPI back end, Next.js front end, deployment (Hugging Face Spaces + Vercel)
 
 ## Data model
 
@@ -76,11 +76,46 @@ real test is a second set written after prompt v3 was frozen:
 - `eval/injections.yaml`: 20 real prompt-injection attempts sampled from the public
   `deepset/prompt-injections` dataset (Apache-2.0) by `scripts/fetch_injections.py`.
 
+A third set, `eval/adversarial.yaml`, holds 20 out-of-the-box tests run by hand
+(authority claims, SQL injection, injected numbers, layoffs, follow-ups, other
+languages). They found 12 issues, none of them data leaks; see
+`eval/FINDINGS_adversarial.md`. The fixes are prompt v4 plus code checks in
+`policy.py`, and the 20 tests now run as regression tests:
+
+```bash
+python scripts/run_eval.py --golden eval/adversarial.yaml
+```
+
 ```bash
 python scripts/fetch_injections.py
 python scripts/run_eval.py --prompt-version v3 --golden eval/unseen.yaml eval/injections.yaml
 python scripts/make_report.py eval/results/<that run>.json --out eval/REPORT_unseen.md
 ```
+
+## Web app
+
+- `src/workforce/api.py`: FastAPI back end. `GET /api/personas`, `POST /api/ask`,
+  `POST /api/feedback`. Per-visitor and daily rate limits protect the free LLM tier, and
+  every question is logged as one JSON line.
+- `web/`: Next.js front end. Pick a demo leader, ask a question, and see the answer with
+  the checks that ran before it was shown, the data table and the SQL.
+- The demo uses personas instead of login. A real deployment would map the signed-in
+  user (for example through Entra ID single sign-on) to the unit they lead.
+
+Run locally:
+
+```bash
+pip install -e ".[api,llm]"
+uvicorn workforce.api:app --reload --port 8000 --env-file .env   # back end
+cd web && cp .env.example .env.local && npm install && npm run dev   # front end on :3000
+```
+
+## Prompt versions
+
+`prompts.py` keeps every version: v1 (Day 3), v2 and v3 (fixes from the first evals) and
+v4 (fixes from the adversarial tests, the default). If v4 can't produce a query that
+passes the guard, the question is retried once with v3 (`FALLBACK_PROMPT_VERSION`,
+`none` to turn off). Each eval result records the version and a hash of its text.
 
 ## Known limits
 
@@ -90,6 +125,13 @@ python scripts/make_report.py eval/results/<that run>.json --out eval/REPORT_uns
 - **Indicator counts.** `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` inside a group of 5+ can
   still count a very narrow subgroup. The guard blocks using `employee_id` or
   `manager_id` in such conditions, but not every narrow combination of attributes.
+- **No conversation memory.** Each question is answered on its own and re-checked against
+  the leader's scope. Vague follow-ups are answered with a stated assumption ("I took
+  this to mean: ..."). Carrying context would be nicer to use but needs care so a
+  follow-up can't widen the scope.
+- **Policy checks are pattern-based.** Requests to pick people to cut, recommendations in
+  answers, and units are caught by rules in `policy.py`, backed by the v4 prompt. Unusual
+  wording can get past a pattern; the adversarial set grows as new cases are found.
 - **Synthetic org tree.** Reporting lines are generated, so team-level patterns mean
   nothing about the real dataset.
 

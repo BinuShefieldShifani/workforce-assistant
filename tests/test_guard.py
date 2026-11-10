@@ -70,3 +70,10 @@ def test_where_is_extracted():
 def test_reserved_name():
     with pytest.raises(SQLRejected, match="reserved"):
         guard("SELECT COUNT(*) AS group_size FROM employees")
+
+
+def test_currency_in_column_name_is_rejected():
+    # adversarial test 3: avg_monthly_income_eur labelled the table in euros
+    with pytest.raises(SQLRejected, match="currency or unit"):
+        guard("SELECT department, AVG(monthly_income) AS avg_monthly_income_eur FROM employees GROUP BY department")
+    guard("SELECT department, AVG(monthly_income) AS avg_monthly_income FROM employees GROUP BY department")

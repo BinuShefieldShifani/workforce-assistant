@@ -142,7 +142,9 @@ def test_currency_symbol_is_flagged(db_path):
 
     llm.complete = with_dollar
     [r] = run_eval(agent, cases, log=lambda *_: None)
-    assert not r.passed and r.style_issues == ["currency symbol in answer"]
+    # the agent now rejects the "$" itself and falls back to the plain table answer,
+    # so the eval never sees a currency symbol
+    assert r.status == "fallback" and "$" not in r.answer and r.style_issues == []
 
 
 def test_report_renders(db_path, tmp_path):
@@ -206,3 +208,24 @@ def test_multiple_golden_files_load_together(tmp_path):
 
     cases = load_golden_files([GOLDEN, ROOT / "eval" / "unseen.yaml"])
     assert len(cases) == 80
+
+
+def test_adversarial_file_is_valid(db_path):
+    cases = load_golden(ROOT / "eval" / "adversarial.yaml")
+    assert len(cases) == 20 and [c.id for c in cases] == [f"a{i:02d}" for i in range(1, 21)]
+    values = resolve_placeholders(db_path)
+    for c in cases:
+        assert values[c.leader] is not None
+        if c.reference_sql:
+            guard(fill(c.reference_sql, values))
+
+
+def test_must_checks(db_path):
+    from workforce.agent import AgentResult
+    from workforce.evaluation import GoldenCase, score_case
+
+    case = GoldenCase(id="x", category="t", leader="ceo", question="q", expect=["answered"],
+                      must_mention=["scale"], must_not_match=r"\b2000\b", must_include_all=["1470"])
+    res = AgentResult(question="q", leader_id=1, status="answered", answer="There are 2000 people.")
+    cr = score_case(case, 1, "q", res, None)
+    assert not cr.passed and len(cr.style_issues) == 3
