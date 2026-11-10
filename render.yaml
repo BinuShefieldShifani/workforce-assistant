@@ -1,0 +1,37 @@
+# Render Blueprint for the back end: native Python, free plan, no Docker.
+# New > Blueprint in the Render dashboard, pick this repo. Values marked sync: false
+# are asked for once in the dashboard and never stored in the repo.
+services:
+  - type: web
+    name: workforce-assistant-api
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: >-
+      pip install -e ".[api,llm]" kaggle &&
+      python scripts/prepare_data.py &&
+      python scripts/build_org.py &&
+      python scripts/load_duckdb.py
+    startCommand: uvicorn workforce.api:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: LLM_PROVIDER
+        value: openai
+      - key: OPENAI_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: LLM_MODEL
+        value: openai/gpt-oss-120b
+      - key: PROMPT_VERSION
+        value: v4
+      - key: DAILY_CAP
+        value: "150"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: KAGGLE_USERNAME
+        sync: false
+      - key: KAGGLE_KEY
+        sync: false

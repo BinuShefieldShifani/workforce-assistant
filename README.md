@@ -15,7 +15,7 @@ generates a synthetic org tree on top of it (company, departments, functions, te
 - [x] Day 2: access scoping and small-group suppression
 - [x] Day 3: text-to-SQL agent with answer verification
 - [x] Day 4: golden question set, eval runner, versioned prompts, eval report
-- [x] Day 5: small-cell masking, FastAPI back end, Next.js front end, deployment (Hugging Face Spaces + Vercel)
+- [x] Day 5: small-cell masking, FastAPI back end, Next.js front end, deployment (Render + Vercel)
 
 ## Data model
 
@@ -116,6 +116,18 @@ cd web && cp .env.example .env.local && npm install && npm run dev   # front end
 v4 (fixes from the adversarial tests, the default). If v4 can't produce a query that
 passes the guard, the question is retried once with v3 (`FALLBACK_PROMPT_VERSION`,
 `none` to turn off). Each eval result records the version and a hash of its text.
+
+## Deployment
+
+- **Back end on Render** (free plan, native Python, `render.yaml`). The build installs the
+  package, downloads the dataset from Kaggle with credentials kept in Render's settings
+  (`scripts/prepare_data.py`), builds the org tree and the DuckDB file, then starts
+  uvicorn. Free services sleep after 15 minutes idle, so the first question after a
+  break takes about a minute.
+- **Front end on Vercel**, root directory `web/`, with `NEXT_PUBLIC_API_URL` pointing at
+  the Render URL. The API only accepts calls from origins listed in `ALLOWED_ORIGINS`.
+- A `Dockerfile` is included for hosts that run containers. (Hugging Face Docker Spaces
+  were the first plan, but they now need a paid account.)
 
 ## Known limits
 

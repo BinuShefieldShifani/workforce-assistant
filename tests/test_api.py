@@ -82,3 +82,30 @@ def test_null_group_values_serialise(db_path):
     r = client(db_path, [sql, "Shown in the table."]).post(
         "/api/ask", json={"persona": "dept_rd", "question": "Headcount per team?"})
     assert r.status_code == 200
+
+
+def test_prepare_data_skips_when_csv_present(monkeypatch, tmp_path):
+    import sys
+
+    from workforce.config import ROOT
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import prepare_data
+
+    csv = tmp_path / "hr.csv"
+    csv.write_text("x")
+    monkeypatch.setattr(prepare_data, "RAW_CSV", csv)
+    assert prepare_data.main() == 0
+
+
+def test_prepare_data_explains_missing_credentials(monkeypatch, tmp_path, capsys):
+    import sys
+
+    from workforce.config import ROOT
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import prepare_data
+
+    monkeypatch.setattr(prepare_data, "RAW_CSV", tmp_path / "missing.csv")
+    for var in ("KAGGLE_USERNAME", "KAGGLE_KEY", "KAGGLE_API_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    assert prepare_data.main() == 1
+    assert "Kaggle credentials" in capsys.readouterr().out

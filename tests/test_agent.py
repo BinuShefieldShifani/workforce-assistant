@@ -201,3 +201,25 @@ def test_old_prompts_are_unchanged():
     # v3's hash is recorded in the committed eval results; it must never change
     assert get_prompts("v3").hash == "938ffb6674"
     assert get_prompts().version == "v4"
+
+
+def test_unit_request_is_answered_in_plain_numbers(db_path):
+    # a03 on v4: the model refused "in euros" outright; now the unit is removed in code
+    sql = '{"sql": "SELECT department, ROUND(AVG(monthly_income), 1) AS avg_monthly_income FROM employees GROUP BY department"}'
+    llm = FakeLLM([sql, "Averages by department are in the table."])
+    res = WorkforceAgent(db_path, llm).ask(ceo(db_path), "What is the average monthly income by department in euros?")
+    assert res.status == "answered" and res.answer.startswith("The data doesn't say which currency")
+    assert "euros" not in llm.prompts[0][1]  # the model never saw the unit
+
+
+def test_follow_up_without_assumption_says_it_was_answered_alone(db_path):
+    sql = '{"sql": "SELECT COUNT(*) AS headcount FROM employees WHERE department = \'Sales\'"}'
+    llm = FakeLLM([sql, "Sales is in the table. The data shows what happened, not why."])
+    res = WorkforceAgent(db_path, llm).ask(ceo(db_path), "And what about Sales?")
+    assert res.answer == "I can't see earlier questions, so I answered this on its own. Sales is in the table."
+
+
+def test_why_question_gets_the_line(db_path):
+    llm = FakeLLM([HEADCOUNT_SQL, "Headcounts are in the table."])
+    res = WorkforceAgent(db_path, llm).ask(ceo(db_path), "Why is headcount so different between departments?")
+    assert res.answer.endswith("This data shows the figures, not the reasons behind them.")
