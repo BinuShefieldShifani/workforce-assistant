@@ -74,7 +74,7 @@ def test_all_groups_hidden(db_path):
 
 def test_unparseable_replies_give_error(db_path):
     llm = FakeLLM(["not json", "still not json"])
-    res = WorkforceAgent(db_path, llm).ask(ceo(db_path), "?")
+    res = WorkforceAgent(db_path, llm, fallback_version="none").ask(ceo(db_path), "Headcount?")
     assert res.status == "error"
 
 
@@ -111,3 +111,93 @@ def test_v3_adds_group_by_and_null_guidance():
     assert "GROUP BY that column" in v3.sql_system and "GROUP BY that column" not in v2.sql_system
     assert "IS NOT NULL" in v3.sql_system
     assert v3.answer_system == v2.answer_system
+
+
+# ---------- fixes from the adversarial tests ----------
+
+def test_help_question_gets_fixed_answer_without_llm(db_path):
+    res = WorkforceAgent(db_path, FakeLLM([])).ask(ceo(db_path), "What can you do?")
+    assert res.status == "help" and res.llm_calls == 0 and "attrition" in res.answer
+
+
+def test_people_decision_refused_in_code(db_path):
+    res = WorkforceAgent(db_path, FakeLLM([])).ask(ceo(db_path), "Which team should I cut to save the most money?")
+    assert res.status == "refused" and res.llm_calls == 0
+
+
+def test_recommendation_in_answer_is_rejected(db_path):
+    sql = '{"sql": "SELECT team, SUM(monthly_income) AS total_monthly_income FROM employees GROUP BY team"}'
+    llm = FakeLLM([sql, "Cut Team 4 to save money.", "Cut Team 4, it costs the most."])
+    res = WorkforceAgent(db_path, llm).ask(ceo(db_path), "What is the total monthly income per team?")
+    assert res.status == "fallback" and "Cut" not in res.answer
+    assert "recommends an action" in " ".join(res.steps)
+
+
+def test_unrequested_pay_column_is_sent_back(db_path):
+    with_pay = ('{"sql": "SELECT gender, ROUND(100 * AVG(CASE WHEN attrition THEN 1 ELSE 0 END), 1) AS pct, '
+                'AVG(monthly_income) AS pay FROM employees GROUP BY gender"}')
+    without = ('{"sql": "SELECT gender, ROUND(100 * AVG(CASE WHEN attrition THEN 1 ELSE 0 END), 1) AS pct '
+               'FROM employees GROUP BY gender"}')
+    llm = FakeLLM([with_pay, without, "Attrition by gender is shown in the table."])
+    res = WorkforceAgent(db_path, llm).ask(ceo(db_path), "Is attrition different for men and women?")
+    assert res.status == "answered" and "monthly_income" not in res.sql
+    assert "does not ask about monthly_income" in llm.prompts[1][1]
+
+
+def test_refused_question_shows_no_sql(db_path):
+    llm = FakeLLM(['{"sql": "SELECT COUNT(*) OVER () FROM employees"}',
+                   '{"sql": "SELECT COUNT(*) OVER () FROM employees"}'])
+    res = WorkforceAgent(db_path, llm, fallback_version="none").ask(ceo(db_path), "Headcount and more?")
+    assert res.status == "error" and res.sql is None
+    assert "SQL" not in res.answer and "query" not in res.answer.lower()
+
+
+def test_multi_part_question_is_split(db_path):
+    parts = '{"parts": ["What is our total headcount?", "What is our overall attrition rate?"]}'
+    llm = FakeLLM([
+        parts,
+        '{"sql": "SELECT COUNT(*) AS headcount FROM employees"}', "Shown in the table.",
+        '{"sql": "SELECT ROUND(100 * AVG(CASE WHEN attrition THEN 1 ELSE 0 END), 1) AS pct FROM employees"}',
+        "Shown in the table.",
+    ])
+    res = WorkforceAgent(db_path, llm).ask(ceo(db_path), "Total headcount and overall attrition?")
+    assert res.status == "answered" and len(res.parts) == 2
+    assert [p.status for p in res.parts] == ["answered", "answered"]
+    assert res.parts[0].rows and res.parts[1].sql
+
+
+def test_vague_question_states_its_assumption(db_path):
+    llm = FakeLLM(['{"sql": "SELECT COUNT(*) AS headcount FROM employees WHERE department = \'Sales\'", '
+                   '"assumption": "a general overview of the Sales department"}', "Sales is in the table."])
+    res = WorkforceAgent(db_path, llm).ask(ceo(db_path), "And what about Sales?")
+    assert res.answer.startswith("I took this to mean: a general overview of the Sales department.")
+
+
+def test_nobody_matching_gets_scope_message(db_path):
+    hr = leader_where(db_path, "unit_type = 'department' AND unit_name = 'Human Resources'")
+    llm = FakeLLM(['{"sql": "SELECT COUNT(*) AS n FROM employees WHERE department = \'Sales\'"}'])
+    res = WorkforceAgent(db_path, llm).ask(hr, "Wie hoch ist die Fluktuation in der Vertriebsabteilung?")
+    assert res.status == "no_data" and "Nobody in your organisation" in res.answer
+    assert "fewer than 5" not in res.answer
+
+
+def test_falls_back_to_v3_when_v4_cannot_write_allowed_sql(db_path):
+    bad = '{"sql": "SELECT * FROM employees"}'
+    llm = FakeLLM([bad, bad, HEADCOUNT_SQL, "Headcounts are in the table."])
+    res = WorkforceAgent(db_path, llm, prompt_version="v4", fallback_version="v3").ask(
+        ceo(db_path), "Headcount by department?")
+    assert res.status == "answered" and res.prompt_version == "v3"
+    assert any("retried with fallback prompts v3" in s for s in res.steps)
+
+
+def test_no_fallback_after_an_exception(db_path):
+    res = WorkforceAgent(db_path, FakeLLM([]), fallback_version="v3").ask(-1, "Headcount?")
+    assert res.status == "error" and not any("fallback" in s for s in res.steps)
+
+
+def test_old_prompts_are_unchanged():
+    from workforce.prompts import get_prompts
+
+    # v3's hash is recorded in the committed eval results; it must never change
+    assert get_prompts("v3").hash == "938ffb6674"
+    assert get_prompts().version == "v4"

@@ -27,6 +27,7 @@ import yaml
 
 from workforce.agent import AgentResult, WorkforceAgent
 from workforce.guard import GROUP_SIZE_COL, guard
+from workforce.policy import answer_issues, unrequested_sensitive_columns
 from workforce.privacy import QueryBlocked, run_safe
 from workforce.scope import ScopedDB, get_leader
 
@@ -48,7 +49,6 @@ PLACEHOLDER_SQL = {
           AND h.headcount >= 10 ORDER BY u.name LIMIT 1""",
 }
 
-CURRENCY = re.compile(r"[$€£¥]|\bSEK\b|\bUSD\b|\bkr\b", flags=re.IGNORECASE)
 ANSWERED = {"answered", "fallback"}
 
 
@@ -63,6 +63,9 @@ class GoldenCase:
     max_words: int = 120
     group: str | None = None   # paraphrase group: variants of one question share a group
     source: str | None = None  # where the question comes from (KPI list, dataset, ...)
+    must_mention: list[str] | None = None     # answer must contain at least one of these
+    must_include_all: list[str] | None = None  # answer must contain every one of these
+    must_not_match: str | None = None         # regex the answer must not match
 
 
 def load_golden_files(paths: list[Path]) -> list[GoldenCase]:
@@ -89,6 +92,9 @@ def load_golden(path: Path) -> list[GoldenCase]:
             max_words=raw.get("max_words", 120),
             group=raw.get("group"),
             source=raw.get("source"),
+            must_mention=raw.get("must_mention"),
+            must_include_all=raw.get("must_include_all"),
+            must_not_match=raw.get("must_not_match"),
         ))
     ids = [c.id for c in cases]
     if len(ids) != len(set(ids)):
@@ -281,12 +287,23 @@ def score_case(case: GoldenCase, leader_id: int, question: str, res: AgentResult
         note = f"reference is {reference[0]} but the agent answered"
 
     style = []
-    if res.status in ANSWERED:
-        if CURRENCY.search(res.answer):
-            style.append("currency symbol in answer")
+    text = res.answer.lower()
+    if res.status in ANSWERED | {"partial"}:
+        style += answer_issues(res.answer)
         words = len(res.answer.split())
         if words > case.max_words:
             style.append(f"answer is {words} words (max {case.max_words})")
+        extra = unrequested_sensitive_columns(question, res.sql or "")
+        if extra:
+            style.append(f"fetched measures the question did not ask for: {', '.join(extra)}")
+    if case.must_mention and not any(m.lower() in text for m in case.must_mention):
+        style.append(f"answer mentions none of {case.must_mention}")
+    if case.must_include_all:
+        missing = [m for m in case.must_include_all if m.lower() not in text]
+        if missing:
+            style.append(f"answer is missing {missing}")
+    if case.must_not_match and re.search(case.must_not_match, res.answer, flags=re.IGNORECASE):
+        style.append(f"answer matches the forbidden pattern {case.must_not_match!r}")
 
     passed = status_ok and (result_ok is not False) and not style
     return CaseResult(

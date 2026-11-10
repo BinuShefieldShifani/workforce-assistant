@@ -38,7 +38,10 @@ def main() -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--golden", type=Path, nargs="+", default=[GOLDEN],
                         help="one or more golden files, run together")
-    parser.add_argument("--prompt-version", default=None, help="v1 or v2 (default: PROMPT_VERSION or v2)")
+    parser.add_argument("--prompt-version", default=None,
+                        help="v1-v4 (default: PROMPT_VERSION, else v4)")
+    parser.add_argument("--no-fallback", action="store_true",
+                        help="don't retry with the fallback prompt version (default v3)")
     parser.add_argument("--ids", nargs="*", help="only run these case ids")
     parser.add_argument("--delay", type=float, default=3.0,
                         help="seconds between cases, to stay under free-tier rate limits")
@@ -61,7 +64,8 @@ def main() -> int:
             parser.error("none of those ids are in the golden file")
 
     llm = get_llm()
-    agent = WorkforceAgent(DUCKDB_PATH, llm, prompt_version=args.prompt_version)
+    agent = WorkforceAgent(DUCKDB_PATH, llm, prompt_version=args.prompt_version,
+                           fallback_version="none" if args.no_fallback else None)
     print(f"Model {llm.model}, prompts {agent.prompts.version} ({agent.prompts.hash}), "
           f"{len(cases)} cases\n")
 
@@ -74,6 +78,7 @@ def main() -> int:
         "model": llm.model,
         "prompt_version": agent.prompts.version,
         "prompt_hash": agent.prompts.hash,
+        "fallback_prompt_version": agent.fallback_prompts.version if agent.fallback_prompts else None,
         "git_commit": git_commit(),
         "golden_file": ", ".join(
             str(g.resolve().relative_to(ROOT)) if g.resolve().is_relative_to(ROOT) else str(g)

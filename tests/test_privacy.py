@@ -62,3 +62,36 @@ def test_query_matching_nobody(db_path):
     db = scoped(db_path, "unit_type = 'company'")
     res = run_safe(db, guard("SELECT team, COUNT(*) FROM employees WHERE age > 200 GROUP BY team"))
     assert res.rows.empty and res.hidden_groups == 0
+
+
+def test_pivot_cannot_show_small_cells():
+    # Unseen-eval case k05: a pivot puts a 3-person cell inside a 23-person row
+    df = pd.DataFrame({"job_level": [5] * 23, "gender": ["Female"] * 3 + ["Male"] * 20, "x": range(23)})
+    q = guard("SELECT job_level, SUM(CASE WHEN gender = 'Female' THEN 1 ELSE 0 END) AS female_count, "
+              "SUM(CASE WHEN gender = 'Male' THEN 1 ELSE 0 END) AS male_count "
+              "FROM employees GROUP BY job_level")
+    assert q.count_columns == ["female_count", "male_count"]
+    res = run_safe(ScopedDB(df), q)
+    row = res.rows.iloc[0]
+    # both counts are blanked, otherwise female = group_size - male
+    assert row["female_count"] is None and row["male_count"] is None
+    assert res.masked_cells == 2 and int(row["group_size"]) == 23
+
+
+def test_large_counts_and_rates_are_not_masked():
+    df = pd.DataFrame({"g": ["a"] * 30, "attrition": [True] * 3 + [False] * 27,
+                       "over_time": [True] * 10 + [False] * 20})
+    q = guard("SELECT g, SUM(CASE WHEN over_time THEN 1 ELSE 0 END) AS overtime_count, "
+              "ROUND(100 * AVG(CASE WHEN attrition THEN 1 ELSE 0 END), 1) AS attrition_pct, "
+              "COUNT(*) AS headcount FROM employees GROUP BY g")
+    assert q.count_columns == ["overtime_count"]  # the rate and COUNT(*) are not subgroup counts
+    res = run_safe(ScopedDB(df), q)
+    assert res.masked_cells == 0 and res.rows.iloc[0]["overtime_count"] == 10
+
+
+def test_nobody_matching_is_not_reported_as_hidden(db_path):
+    # adversarial test 20: COUNT without GROUP BY returns one row with 0 people
+    db = scoped(db_path, "unit_type = 'department' AND unit_name = 'Human Resources'")
+    res = run_safe(db, guard("SELECT ROUND(100 * AVG(CASE WHEN attrition THEN 1 ELSE 0 END), 1) AS pct "
+                             "FROM employees WHERE department = 'Sales'"))
+    assert res.matched_nobody and res.hidden_groups == 0 and res.rows.empty
