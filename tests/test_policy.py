@@ -87,3 +87,36 @@ def test_unrequested_pay_is_flagged():
     sql = "SELECT gender, AVG(monthly_income) AS pay FROM employees GROUP BY gender"
     assert unrequested_sensitive_columns("Is attrition different for men and women?", sql) == ["monthly_income"]
     assert unrequested_sensitive_columns("What is the average salary by gender?", sql) == []
+
+
+# ---------- added after the first v4 run ----------
+
+def test_units_are_removed_from_the_question():
+    from workforce.policy import requested_unit, strip_unit, unit_note
+
+    q = "What is the average monthly income by department in euros?"
+    assert requested_unit(q) == "euros"
+    assert strip_unit(q) == "What is the average monthly income by department?"
+    assert requested_unit("What is the attrition rate in Sales?") is None
+    assert "currency" in unit_note("euros") and "distance" in unit_note("km")
+
+
+def test_why_line_added_only_to_why_questions():
+    from workforce.policy import WHY_SENTENCE, tidy_why
+
+    # a02: answered a "why" question without saying the data can't show causes
+    assert tidy_why("Why is attrition higher in HR?", "HR is 19.0.").endswith(WHY_SENTENCE)
+    # a05: added the line to a question that wasn't a "why" question
+    assert tidy_why("And what about Sales?",
+                    "Sales is 20.6 percent. The data shows what happened, not why.") == "Sales is 20.6 percent."
+    kept = "HR is 19.0. The data shows what happened, not why."
+    assert tidy_why("Why is HR high?", kept) == kept
+
+
+def test_follow_ups_are_detected():
+    from workforce.policy import is_follow_up
+
+    for q in ["And what about Sales?", "What about R&D?", "Same for HR", "och Sales?"]:
+        assert is_follow_up(q)
+    for q in ["What is the attrition rate in Sales?", "And how does attrition vary by job role across all departments?"]:
+        assert not is_follow_up(q)

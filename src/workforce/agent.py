@@ -32,11 +32,17 @@ from workforce.llm import LLM
 from workforce.policy import (
     COULD_NOT_ANSWER,
     DECISION_REFUSAL,
+    FOLLOW_UP_NOTE,
     answer_issues,
     help_text,
+    is_follow_up,
     is_help,
     is_people_decision,
     plain_refusal,
+    requested_unit,
+    strip_unit,
+    tidy_why,
+    unit_note,
     unrequested_sensitive_columns,
 )
 from workforce.privacy import QueryBlocked, SafeResult, run_safe
@@ -166,11 +172,18 @@ class WorkforceAgent:
                 result.status, result.answer = "refused", DECISION_REFUSAL
                 result.steps.append("refused in code: recommendation about people's jobs")
                 return result
+            # "in euros": the data has no currency, so ask without it and say so in the answer
+            unit = requested_unit(question)
+            asked = strip_unit(question) if unit else question
+            if unit:
+                result.steps.append(f"removed the unit '{unit}' from the question; the data has none")
             db = ScopedDB.for_leader(self.db_path, leader)
             try:
-                self._run(leader, db, question, result, prompts, allow_parts)
+                self._run(leader, db, asked, result, prompts, allow_parts)
             finally:
                 db.close()
+            if unit and result.status in OK_STATUSES:
+                result.answer = f"{unit_note(unit)} {result.answer}"
         except Exception as e:  # the API must always get a result back
             result.status = "error"
             result.answer = "Something went wrong answering this question."
@@ -280,7 +293,12 @@ class WorkforceAgent:
             issues = answer_issues(answer)
             if check.passed and not issues:
                 result.status = "answered"
-                result.answer = f"I took this to mean: {assumption}. {answer}" if assumption else answer
+                answer = tidy_why(question, answer)
+                if assumption:
+                    answer = f"I took this to mean: {assumption}. {answer}"
+                elif is_follow_up(question):
+                    answer = f"{FOLLOW_UP_NOTE} {answer}"
+                result.answer = answer
                 result.steps.append(f"answer verified on attempt {attempt}")
                 break
             problems = ([f"numbers not in the result: {', '.join(check.unsupported)}"]

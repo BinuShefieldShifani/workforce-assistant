@@ -11,6 +11,14 @@ depend on the model following instructions.
                                 recommendations to cut or fire people (findings 2, 3, 7)
     plain_refusal               refusal text in a leader's language, no system internals (finding 11)
     unrequested_sensitive_columns  pay/performance columns the question didn't ask for (finding 10)
+    requested_unit / strip_unit     "in euros": answer in plain numbers and say why (finding 2)
+    is_why_question / tidy_why     "why" questions get the what-not-why line; others don't (1)
+    is_follow_up                   "and what about Sales?" is flagged as answered on its own (4)
+
+The last three were added after the first v4 run: the model refused the euros question
+outright, skipped the what-not-why line on a "why" question, added it to a question
+that wasn't one, and did not state its assumption on a follow-up. Doing these in code
+makes them reliable without changing the recorded v4 prompt.
 """
 
 from __future__ import annotations
@@ -168,3 +176,65 @@ def unrequested_sensitive_columns(question: str, sql: str) -> list[str]:
         if re.search(rf"\b{col}\b", sql or "", re.I) and not re.search(rf"\b({words})", question, re.I):
             out.append(col)
     return out
+
+
+# ---------- units the leader asked for ----------
+
+_UNIT_REQUEST = re.compile(
+    r"\s*\b(in|as|into|using)\s+(euros?|eur|dollars?|usd|us dollars|sek|kronor|swedish kronor|"
+    r"pounds?|gbp|rupees?|inr|kilomet(?:er|re)s?|km|miles?)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def requested_unit(question: str) -> str | None:
+    m = _UNIT_REQUEST.search(question)
+    return m.group(2) if m else None
+
+
+def strip_unit(question: str) -> str:
+    return " ".join(_UNIT_REQUEST.sub("", question).split())
+
+
+def unit_note(unit: str) -> str:
+    if unit.lower().startswith(("km", "kilomet", "mile")):
+        return f"The data gives no unit for distance, so these are plain numbers, not {unit}."
+    return f"The data doesn't say which currency incomes are in, so these are plain numbers, not {unit}."
+
+
+# ---------- "why" questions ----------
+
+_WHY_Q = re.compile(
+    r"\bwhy\b|\breasons?\b|\bcaus(e|es|ed|ing)\b|\bdriv(e|es|ing|ers?)\b|\bvarför\b|\bwarum\b",
+    flags=re.IGNORECASE,
+)
+_WHY_LINE = re.compile(r"\s*[^.!?]*\b(shows|show|tells us|explains?)\b[^.!?]*\bnot why\b[^.!?]*[.!?]",
+                       flags=re.IGNORECASE)
+WHY_SENTENCE = "This data shows the figures, not the reasons behind them."
+
+
+def is_why_question(question: str) -> bool:
+    return bool(_WHY_Q.search(question))
+
+
+def tidy_why(question: str, answer: str) -> str:
+    """Make sure a "why" question says the data can't show causes, and drop that line
+    from answers to questions that didn't ask why."""
+    has_line = bool(_WHY_LINE.search(answer))
+    if is_why_question(question):
+        return answer if has_line else f"{answer.rstrip()} {WHY_SENTENCE}"
+    return _WHY_LINE.sub("", answer).strip() if has_line else answer
+
+
+# ---------- follow-ups ----------
+
+_FOLLOW_UP = re.compile(
+    r"^\s*(and|also|plus|och)\b|^\s*(what|how) about\b|^\s*same (for|thing)\b|^\s*(and )?for\b"
+    r"|\b(that|those|it|them) (again|too)\b",
+    flags=re.IGNORECASE,
+)
+FOLLOW_UP_NOTE = "I can't see earlier questions, so I answered this on its own."
+
+
+def is_follow_up(question: str) -> bool:
+    return bool(_FOLLOW_UP.search(question)) and len(question.split()) <= 8

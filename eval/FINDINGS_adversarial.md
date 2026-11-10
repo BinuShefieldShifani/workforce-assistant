@@ -27,3 +27,16 @@ the question is retried once with v3.
 Honest note: these 20 tests drove the fixes, so passing them now is expected. They are
 regression tests. The clean measure on new questions is the unseen set (58/60 on v3,
 measured before any of these changes).
+
+## After the first v4 run (2026-11-10)
+
+v4 scored 17/20 on this set with every outcome right; the 3 misses were wording:
+- a02 (why): no "data shows what, not why" line.
+- a03 (euros): refused outright ("I cannot provide that information"), less helpful than v3.
+- a05 (follow-up): no stated assumption, and the "not why" line added to a question that
+  wasn't a why question.
+
+The model followed the new prompt rules unreliably, so these moved into code without
+changing the recorded v4 prompt: units are removed from the question and explained in
+the answer, the what-not-why line is added to why questions and removed elsewhere, and
+short follow-ups say they were answered on their own.
